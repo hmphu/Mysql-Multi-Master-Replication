@@ -1,0 +1,239 @@
+    Step 1 - Setup the hosts file
+    Step 2 - Configure Firewalld
+    Step 3 - Install the Epel Repository and Socat
+    Step 4 - Install Percona XtraDB Cluster
+    Step 5 - Configure Percona XtraDB Cluster
+    Step 6 - Start the Percona XtraDB Cluster Server
+    Step 7 - Testing
+    Reference
+
+In this tutorial, I will show you how to install and configure Percona XtraDB Cluster on a CentOS 7 server. We will use Percona XtraDB Cluster 5.6 that is fully compatible to MySQL and the Percona Server.
+Percona is a company of MySQL and MongoDB database experts founded in 2006. Percona builds and maintains open source software for MySQL and MongoDB: the Percona Server (database server for MySQL with high availability performance enhancements), Percona XtraDB Cluster (high availability solution for MySQL cluster), Percona Server for MongoDB and other tools for managing the databases such as the Percona toolkit, Percona monitoring tools and Percona XtraBackup.
+Prerequisite
+============
+    3 CentOS 7 server nodes.
+    Root privileges.
+    Basic CentOS 7 knowledge.
+
+Step 1 - Setup the hosts file
+
+The first thing to do is to configure the hostnames of all servers. I've 3 servers with CentOS 7 as listed below:
+
+Node           Server IP       Hostname
+Node1   -   192.168.43.36     percona1
+Node2   -   192.168.43.166    percona2
+Node3   -   192.168.43.148    percona3
+
+Connect to all servers by using your terminal:
+
+ssh root@serverip
+If you have logged into all server, edit the '/etc/hosts' file on each server with vim:
+vim /etc/hosts
+192.168.43.36   percona1
+192.168.43.166  percona2
+192.168.43.148  percona3
+
+Replace the IP addresses with the ones that match your local network configuration. Save and exit.
+
+Configure the hosts file.
+Step 2 - Configure Firewalld
+Firewalld is the new default firewall interface on CentOS 7. The firewall-cmd command is used to configure the firewall. We can define and configure specific groups or zones, or we can configure a firewall for services like ssh, MySQL databases, nginx/apache web server etc.
+In this step, we will use firewalld for the firewall configuration. We will use the 'firewall-cmd' command to open the percona server port and other ports  that are needed for the cluster.
+
+Start firewalld with this systemctl command:
+systemctl start firewalld
+
+Then run the command below to open the port used by the MySQL/percona server:
+
+firewall-cmd --zone=public --add-service=mysql --permanent
+
+firewall-cmd --zone=public --add-port=3306/tcp --permanent
+firewall-cmd --zone=public --add-port=4567/tcp --permanent
+firewall-cmd --zone=public --add-port=4568/tcp --permanent
+firewall-cmd --zone=public --add-port=4444/tcp --permanent
+firewall-cmd --zone=public --add-port=4567/udp --permanent
+
+Reload the firewall rules:
+
+firewall-cmd --reload
+
+firewall-cmd --list-all
+
+Configure the firewall
+
+Step 3 - Install the Epel Repository and Socat
+
+To get Percona XtraDB Cluster running on the server, we need to install socat, and it's available in the epel-repository. So we need to install the Epel repository first and then install socat. Further we have to remove the mariadb-libs from the server because they conflict with the Percona XtraDB Cluster.
+
+Install epel-repository and socat:
+
+yum -y install epel-release
+yum -y install socat
+
+Remove the mariadb-libs to avoid the package conflict between mariadb-libs and Percona XtraDB Cluster:
+
+yum -y remove mariadb-libs
+
+The Epel repository and socat are installed.
+
+Step 4 - Install Percona XtraDB Cluster
+
+In this step, we will install the Percona xtradb cluster with all package dependencies. We need to add the Percona repository for the installation and then we start the Percona server and configure the root user and password for the database server.
+
+Install the Percona repository with yum:
+=========================================
+
+yum -y install http://www.percona.com/downloads/percona-release/redhat/0.1-3/percona-release-0.1-3.noarch.rpm
+
+yum install Percona-XtraDB-Cluster-server-56 Percona-XtraDB-Cluster-client-56 Percona-XtraDB-Cluster-shared-56 percona-toolkit percona-xtrabackup Percona-XtraDB-Cluster-galera-3 rsync nc
+
+Percona XtraDB Cluster is installed, start the Percona server with zhis systemctl command:
+
+systemctl start mysql
+
+Next, configure the root password for all percona/mysql servers:
+
+mysql_secure_installation
+
+Set the percona/mysql password:
+
+Enter current password for root (enter for none): PRESS ENTER
+Set root password? [Y/n] Y
+New password: TYPE YOUR PASSWORD
+Re-enter new password: REPEAT PASSWORD
+Remove anonymous users? [Y/n] Y
+Disallow root login remotely? [Y/n] Y
+Reload privilege tables now? [Y/n] Y
+
+Note:
+
+Run step 1 - 4 on all 3 CentOS server.
+
+Step 5 - Configure Percona XtraDB Cluster
+
+In step 4 we've already installed Percona XtraDB Cluster and configured the root password for all Percona/Mysql server nodes. In this step, we will create a new user for SST authentication and edit the MySQL configuration my.cnf on each of server.
+
+SST (State Snapshot Transfer) is a full data copy from one server as a donor to another server as the joiner. For the SST authentication, we need to create a new user called 'sstuser' with password 'sstuser@'. And for the SST method, we will use xtrabackup-v2 instead of rsync. Please use a different and secure password for your cluster!
+
+Login to the percona/mysql shell on each server:
+
+mysql -u root -p
+TYPE YOUR PASSWORD
+
+And create the new 'sstuser' with password 'sstuser@':
+
+create user sstuser@'%' identified by 'mypass@';
+grant all on *.* to sstuser@'%';
+flush privileges;
+
+Create the SST user
+
+Then stop the MySQL service on each server before editing the config file:
+
+systemctl stop mysql
+
+Next, edit the mysql configuration file my.cnf on each server with the vim editor.
+
+On Percona1 server:
+
+vim /etc/my.cnf
+-----------------
+Change all 'wsrep' line with configuration below:
+
+wsrep_cluster_address          = gcomm://
+wsrep_provider                 = /usr/lib64/galera3/libgalera_smm.so
+
+wsrep_slave_threads            = 8
+wsrep_cluster_name             = Cluster Percona XtraDB
+wsrep_node_name                = percona1
+
+wsrep_node_address             = percona1
+wsrep_sst_method               = xtrabackup-v2
+wsrep_sst_auth                 = sstuser:mypass@
+
+
+On Percona2 server:
+-------------------
+
+vim /etc/my.cnf
+
+Change all 'wsrep' line with configuration below:
+
+wsrep_cluster_address          = gcomm://percona1,percona3
+wsrep_provider                 = /usr/lib64/galera3/libgalera_smm.so
+
+wsrep_slave_threads            = 8
+wsrep_cluster_name             = Cluster Percona XtraDB
+wsrep_node_name                = percona2
+
+wsrep_node_address             = percona2
+wsrep_sst_method               = xtrabackup-v2
+wsrep_sst_auth                 = sstuser:mypass@
+
+Save and exit.
+
+On Percona3 server:
+--------------------
+vim /etc/my.cnf
+
+Change all 'wsrep' line with configuration below:
+
+wsrep_cluster_address          = gcomm://percona1,percona2
+wsrep_provider                 = /usr/lib64/galera3/libgalera_smm.so
+
+wsrep_slave_threads            = 8
+wsrep_cluster_name             = Cluster Percona XtraDB
+wsrep_node_name                = percona3
+
+wsrep_node_address             = percona3
+wsrep_sst_method               = xtrabackup-v2
+wsrep_sst_auth                 = sstuser:mypass@
+
+Save and exit.
+
+Screenshot from the percona2 server.
+
+Percona Server configuration.
+
+Step 6 - Start the Percona XtraDB Cluster Server
+
+We've configured Percona XtraDB cluster on all servers, and now we can start the server.
+
+On Percona1 server, bootstraping or getting the cluster up and running:
+
+systemctl start mysql@bootstrap
+
+Next, start Percona/MySQL server on percona2 and percona3 server with the command below:
+
+systemctl start mysql
+
+make sure there are no error messages. If there is an error after typing to start MySQL, check the log file '/var/log/messages'.
+
+Step 7 - Testing
+
+We must log in to the percona/mysql shell on each server for testing the Percona XtraDB cluster.
+
+Login to the Percona/MySQL shell on all servers/nodes:
+
+mysql -u root -p
+TYPE YOUR PASSWORD
+
+Testing the High Availability with mysql command:
+
+SHOW STATUS LIKE 'wsrep_local_state_comment';
+
+Try that command on every node, if you see "Synced"  as the result, then that node is ready to handle traffic.
+
+Testing available nodes of the cluster:
+
+show global status like 'wsrep_cluster_size';
+
+You will get the current number of nodes in the Percona cluster.
+
+Percona server synced.
+
+For the full results, you can use the command below:
+
+show global status like 'wsrep%';
+
+
