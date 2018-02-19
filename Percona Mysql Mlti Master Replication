@@ -1,0 +1,115 @@
+yum install http://www.percona.com/downloads/percona-release/redhat/0.1-4/percona-release-0.1-4.noarch.rpm
+
+yum list | grep percona
+
+yum install Percona-XtraDB-Cluster-57
+
+service mysql start
+
+grep 'temporary password' /var/log/mysqld.log
+mysql -u root -p
+
+mysql> ALTER USER 'root'@'localhost' IDENTIFIED BY 'rootPass';
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> CREATE USER 'sstuser'@'localhost' IDENTIFIED BY 'passw0rd';
+mysql> GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO
+  'sstuser'@'localhost';
+mysql> FLUSH PRIVILEGES;
+
+
+mysql> exit
+Bye
+
+service mysql stop
+
+setenforce 0 (three nodes)
+
+    Node 1
+        Host name: percona1
+        IP address: 192.168.70.71
+    Node 2
+        Host name: percona2
+        IP address: 192.168.70.72
+    Node 3
+        Host name: percona3
+        IP address: 192.168.70.73
+node 1
+
+/etc/mysql/my.cnf 
+wsrep_provider=/usr/lib64/galera3/libgalera_smm.so
+
+wsrep_cluster_name=pxc-cluster
+wsrep_cluster_address=gcomm://192.168.70.61,192.168.70.62,192.168.70.63
+
+wsrep_node_name=pxc1
+wsrep_node_address=192.168.70.61
+
+wsrep_sst_method=xtrabackup-v2
+wsrep_sst_auth=sstuser:passw0rd
+
+pxc_strict_mode=ENFORCING
+
+binlog_format=ROW
+default_storage_engine=InnoDB
+innodb_autoinc_lock_mode=2
+
+
+
+
+
+    For the second node:
+
+    wsrep_node_name=pxc2
+    wsrep_node_address=192.168.70.62
+
+    For the third node:
+
+    wsrep_node_name=pxc3
+    wsrep_node_address=192.168.70.63
+
+
+
+Bootstrapping the First Node
+
+ systemctl start mysql@bootstrap.service
+ 
+ Starting the Second Node and Third Node
+ 
+ systemctl start mysql
+ 
+ Verifying Replication
+ 
+ 
+
+    Create a new database on the second node:
+
+    mysql@pxc2> CREATE DATABASE percona;
+    Query OK, 1 row affected (0.01 sec)
+
+    Create a table on the third node:
+
+    mysql@pxc3> USE percona;
+    Database changed
+
+    mysql@pxc3> CREATE TABLE example (node_id INT PRIMARY KEY, node_name VARCHAR(30));
+    Query OK, 0 rows affected (0.05 sec)
+
+    Insert records on the first node:
+
+    mysql@pxc1> INSERT INTO percona.example VALUES (1, 'percona1');
+    Query OK, 1 row affected (0.02 sec)
+
+    Retrieve rows from that table on the second node:
+
+    mysql@pxc2> SELECT * FROM percona.example;
+    +---------+-----------+
+    | node_id | node_name |
+    +---------+-----------+
+    |       1 | percona1  |
+    +---------+-----------+
+    1 row in set (0.00 sec)
+
+
+ 
+ 
